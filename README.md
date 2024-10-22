@@ -18,8 +18,8 @@ This project is a web-based Python script that allows you to control an air cond
 ## Installation
 1. Clone the repository:
     ```bash
-    git clone https://github.com/yourusername/raspberry-pi-ac-control.git
-    cd raspberry-pi-ac-control
+    git clonehttps://github.com/mama-sucker/AC-GE-PIControl.git
+    cd AC-GE-PIControl
     ```
 
 2. Install the required Python packages:
@@ -29,7 +29,7 @@ This project is a web-based Python script that allows you to control an air cond
 
 3. Run the Flask application:
     ```bash
-    python app.py
+    python3 main.py
     ```
 
 ## Usage
@@ -44,7 +44,7 @@ This project is a web-based Python script that allows you to control an air cond
 - **SPEAKER**: GPIO 23
 
 ## Notes
-- Ensure that your relay is connected correctly to the GPIO pins listed above.
+- Ensure that your relay is connected correctly to the GPIO pins listed above. or change to your preference
 - The system gives audio feedback via the speaker for status changes.
 
 ## Safety Shutdown
