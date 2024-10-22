@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AC Control System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .control-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.active {
+            background-color: #28a745;
+        }
+        button.off {
+            background-color: #dc3545;
+        }
+        .schedule-panel {
+            margin-top: 20px;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #e9ecef;
+        }
+    </style>
+</head>
+<body>
+    <div class="control-panel">
+        <h2>AC Control System</h2>
+        
+        <h3>Fan Speed</h3>
+        <div class="button-group" id="fanSpeed">
+            <button onclick="setFanSpeed('low')" data-speed="low">Low</button>
+            <button onclick="setFanSpeed('medium')" data-speed="medium">Medium</button>
+            <button onclick="setFanSpeed('high')" data-speed="high">High</button>
+        </div>
+
+        <h3>Operation Mode</h3>
+        <div class="button-group" id="operationMode">
+            <button onclick="setMode('off')" class="off">Turn Off</button>
+            <button onclick="setMode('fan_only')">Fan Only</button>
+            <button onclick="setMode('with_compressor')">Fan + Compressor</button>
+        </div>
+
+        <div class="schedule-panel">
+            <h3>Schedule Operation</h3>
+            <div>
+                <label>Start Time:</label>
+                <input type="time" id="startTime">
+                
+                <label>End Time:</label>
+                <input type="time" id="endTime">
+                
+                <button onclick="setSchedule()">Set Schedule</button>
+            </div>
+        </div>
+
+        <div class="status" id="status">
+            Status: System Ready
+        </div>
+    </div>
+
+    <script>
+        let currentFanSpeed = 'low';
+        let currentMode = 'off';
+
+        function setFanSpeed(speed) {
+            currentFanSpeed = speed;
+            document.querySelectorAll('#fanSpeed button').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.speed === speed) {
+                    btn.classList.add('active');
+                }
+            });
+            if (currentMode !== 'off') {
+                updateAC();
+            }
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('#operationMode button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            if (mode !== 'off') {
+                document.querySelector(`button[onclick="setMode('${mode}')"]`).classList.add('active');
+            }
+            updateAC();
+        }
+
+        function updateAC() {
+            fetch('/api/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    mode: currentMode,
+                    fan_speed: currentFanSpeed
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('status').textContent = `Status: ${data.message}`;
+            })
+            .catch(error => {
+                document.getElementById('status').textContent = `Error: ${error.message}`;
+            });
+        }
+
+        function setSchedule() {
+            const startTime = document.getElementById('startTime').value;
+            const endTime = document.getElementById('endTime').value;
+            
+            if (!startTime || !endTime) {
+                alert('Please set both start and end times');
+                return;
+            }
+
+            fetch('/api/schedule', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    start_time: startTime,
+                    end_time: endTime,
+                    mode: currentMode,
+                    fan_speed: currentFanSpeed
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('status').textContent = `Status: ${data.message}`;
+            })
+            .catch(error => {
+                document.getElementById('status').textContent = `Error: ${error.message}`;
+            });
+        }
+    </script>
+</body>
+</html>
