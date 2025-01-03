@@ -1,0 +1,16 @@
+[Unit]
+Description=Fauxmo Service for AC Control
+After=network.target ac-control.service
+Requires=ac-control.service
+
+[Service]
+Type=simple
+User=general
+WorkingDirectory=/home/general/Claude-Air-Alexa
+ExecStart=/bin/bash -c 'source venv/bin/activate && fauxmo -c fauxmo_config.json'
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

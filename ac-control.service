@@ -1,0 +1,16 @@
+[Unit]
+Description=AC Control System
+After=network.target
+Wants=ac-fauxmo.service
+
+[Service]
+Type=simple
+User=general
+WorkingDirectory=/home/general/Claude-Air-Alexa
+ExecStart=/bin/bash -c 'source venv/bin/activate && python3 main.py'
+StandardOutput=inherit
+StandardError=inherit
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
