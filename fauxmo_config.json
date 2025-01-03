@@ -1,0 +1,27 @@
+{
+    "FAUXMO": {
+        "ip_address": "192.168.1.205"
+    },
+    "PLUGINS": {
+        "SimpleHTTPPlugin": {
+            "DEVICES": [
+                {
+                    "name": "AC",
+                    "port": 12340,
+                    "on_cmd": "http://192.168.1.205:5000/api/control",
+                    "off_cmd": "http://192.168.1.205:5000/api/control",
+                    "method": "POST",
+                    "on_data": "mode=with_compressor&fan_speed=low",
+                    "off_data": "mode=off",
+                    "state_cmd": "http://192.168.1.205:5000/api/status",
+                    "state_method": "GET",
+                    "state_response_on": "on",
+                    "state_response_off": "off",
+                    "headers": {
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    }
+                }
+            ]
+        }
+    }
+}
