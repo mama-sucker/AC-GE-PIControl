@@ -4,6 +4,9 @@ import time
 from datetime import datetime
 import threading
 import schedule
+import socket
+import json
+import os
 
 app = Flask(__name__)
 
@@ -16,9 +19,22 @@ SPEAKER = 23
 
 # Global variables
 current_mode = "off"
+current_fan_speed = "low"
 timer_thread = None
 schedule_thread = None
 stop_timer = threading.Event()
+
+def get_ip_address():
+    """Get the local IP address of the Raspberry Pi"""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
 
 class ACController:
     def __init__(self):
@@ -35,7 +51,7 @@ class ACController:
             SPEAKER: "Speaker"
         }
         
-        # Initialize all pins to ON state (LOW)
+        # Initialize all pins to OFF state (LOW)
         for pin in self.pins:
             GPIO.setup(pin, GPIO.OUT)
             GPIO.output(pin, GPIO.LOW)
@@ -46,30 +62,28 @@ class ACController:
     
     def beep(self):
         """Activate speaker for status change indication"""
-        GPIO.output(SPEAKER, GPIO.HIGH)  # Turn speaker ON
+        GPIO.output(SPEAKER, GPIO.HIGH)
         time.sleep(0.2)
-        GPIO.output(SPEAKER, GPIO.LOW)   # Turn speaker OFF
+        GPIO.output(SPEAKER, GPIO.LOW)
     
     def turn_on_fan(self, fan_pin):
         """Turn on selected fan speed"""
         # Turn off all fans first
         for pin in [FAN_LOW, FAN_MEDIUM, FAN_HIGH]:
-            GPIO.output(pin, GPIO.LOW)  # Ensure all fans are off initially
+            GPIO.output(pin, GPIO.LOW)
         
         # Turn on selected fan
-        GPIO.output(fan_pin, GPIO.HIGH)  # Activate selected fan
+        GPIO.output(fan_pin, GPIO.HIGH)
         self.current_fan = fan_pin
         self.beep()
-        
-        # Return success status
         return True
     
     def turn_on_compressor(self):
         """Turn on compressor with safety delay"""
         if self.current_fan is not None:
             print("Waiting 3 seconds before starting compressor...")
-            time.sleep(3)  # 3-second safety delay
-            GPIO.output(COMPRESSOR, GPIO.HIGH)  # Turn on compressor
+            time.sleep(3)
+            GPIO.output(COMPRESSOR, GPIO.HIGH)
             self.compressor_running = True
             self.beep()
             return True
@@ -78,21 +92,17 @@ class ACController:
     def turn_off_compressor(self):
         """Turn off compressor first"""
         if self.compressor_running:
-            GPIO.output(COMPRESSOR, GPIO.LOW)  # Turn off compressor
+            GPIO.output(COMPRESSOR, GPIO.LOW)
             self.compressor_running = False
             self.beep()
             print("Waiting 3 seconds before turning off fan...")
-            time.sleep(3)  # 3-second safety delay before fan can be turned off
+            time.sleep(3)
     
     def turn_off_all(self):
         """Turn off all outputs with proper sequencing"""
-        # First turn off compressor if running
         self.turn_off_compressor()
-        
-        # Then turn off all fans
         for pin in [FAN_LOW, FAN_MEDIUM, FAN_HIGH]:
             GPIO.output(pin, GPIO.LOW)
-        
         self.current_fan = None
         self.beep()
     
@@ -100,14 +110,9 @@ class ACController:
         """Run the 30/15 minute cycle for compressor operation"""
         while not stop_timer.is_set():
             print("Starting new compressor cycle...")
-            
-            # Turn on fan first
             self.turn_on_fan(fan_pin)
-            
-            # Turn on compressor after delay
             self.turn_on_compressor()
             
-            # Run for 30 minutes
             cycle_end_time = time.time() + 1800  # 30 minutes
             while time.time() < cycle_end_time and not stop_timer.is_set():
                 time.sleep(1)
@@ -115,10 +120,8 @@ class ACController:
             if stop_timer.is_set():
                 break
             
-            # Turn off compressor but keep fan running
             self.turn_off_compressor()
             
-            # Run fan only for 15 minutes
             fan_cycle_end = time.time() + 900  # 15 minutes
             while time.time() < fan_cycle_end and not stop_timer.is_set():
                 time.sleep(1)
@@ -129,7 +132,7 @@ class ACController:
     def safe_shutdown(self):
         """Safely shut down the system"""
         self.turn_off_all()
-        time.sleep(1)  # Give time for all operations to complete
+        time.sleep(1)
         GPIO.cleanup()
 
 ac = ACController()
@@ -140,77 +143,148 @@ def home():
 
 @app.route('/api/control', methods=['POST'])
 def control():
-    global timer_thread, current_mode
+    global timer_thread, current_mode, current_fan_speed
     
-    data = request.get_json()
-    mode = data.get('mode')
-    current_mode = mode
+    try:
+        print(f"Raw request data: {request.get_data().decode('utf-8', errors='ignore')}")
+        print(f"Content-Type: {request.content_type}")
+        
+        # Initialize data dictionary
+        data = {}
+        
+        # Handle different content types
+        if request.content_type == 'application/json':
+            data = request.get_json(force=True, silent=True) or {}
+        elif request.content_type == 'application/x-www-form-urlencoded':
+            data = request.form.to_dict()
+        elif 'xml' in request.content_type:
+            # Parse Fauxmo's XML data
+            xml_data = request.get_data().decode('utf-8')
+            if 'BinaryState' in xml_data:
+                state = '1' in xml_data
+                data = {
+                    'mode': 'with_compressor' if state else 'off',
+                    'fan_speed': 'low'
+                }
+        else:
+            # Try to parse as form data if content type is not specified
+            data = request.form.to_dict()
+            if not data and request.get_data():
+                # Try to parse as URL-encoded data
+                raw_data = request.get_data().decode('utf-8')
+                if 'mode=' in raw_data:
+                    data = dict(item.split('=') for item in raw_data.split('&'))
+        
+        print(f"Processed request data: {data}")
+        
+        if not data:
+            return jsonify({"status": "error", "message": "No valid data received"}), 400
+        
+        # Get mode from data, default to 'off'
+        mode = data.get('mode', 'off')
+        current_mode = mode
+        
+        # Stop any running timer
+        stop_timer.set()
+        if timer_thread and timer_thread.is_alive():
+            timer_thread.join()
+        stop_timer.clear()
+        
+        if mode == 'off':
+            print("Turning off AC")
+            ac.turn_off_all()
+            return jsonify({"status": "success", "message": "AC turned off"})
+        
+        fan_speed = data.get('fan_speed', 'low')
+        current_fan_speed = fan_speed
+        
+        fan_pins = {
+            'low': FAN_LOW,
+            'medium': FAN_MEDIUM,
+            'high': FAN_HIGH
+        }
+        
+        fan_pin = fan_pins.get(fan_speed)
+        if not fan_pin:
+            print(f"Invalid fan speed: {fan_speed}")
+            return jsonify({"status": "error", "message": "Invalid fan speed"}), 400
+        
+        if mode == 'fan_only':
+            print("Activating fan only mode")
+            ac.turn_on_fan(fan_pin)
+            return jsonify({"status": "success", "message": "Fan mode activated"})
+        elif mode == 'with_compressor':
+            print("Starting compressor cycle")
+            timer_thread = threading.Thread(target=ac.run_compressor_cycle, args=(fan_pin,))
+            timer_thread.start()
+            return jsonify({"status": "success", "message": "Compressor cycle started"})
+        
+        print(f"Invalid mode selected: {mode}")
+        return jsonify({"status": "error", "message": "Invalid mode selected"}), 400
     
-    # Stop any running timer
-    stop_timer.set()
-    if timer_thread and timer_thread.is_alive():
-        timer_thread.join()
-    stop_timer.clear()
+    except Exception as e:
+        print(f"Error in control endpoint: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+def create_fauxmo_config():
+    """Create Fauxmo configuration file"""
+    local_ip = get_ip_address()
+    print(f"Creating Fauxmo config with local IP: {local_ip}")
     
-    if mode == 'off':
-        ac.turn_off_all()
-        return jsonify({"status": "success", "message": "AC turned off"})
-    
-    fan_pins = {
-        'low': FAN_LOW,
-        'medium': FAN_MEDIUM,
-        'high': FAN_HIGH
+    config = {
+        "FAUXMO": {
+            "ip_address": local_ip
+        },
+        "PLUGINS": {
+            "SimpleHTTPPlugin": {
+                "DEVICES": [
+                    {
+                        "name": "AC",
+                        "port": 12340,
+                        "on_cmd": f"http://{local_ip}:5000/api/control",
+                        "off_cmd": f"http://{local_ip}:5000/api/control",
+                        "method": "POST",
+                        "on_data": "mode=with_compressor&fan_speed=low",  # Changed to form data format
+                        "off_data": "mode=off",  # Changed to form data format
+                        "state_cmd": f"http://{local_ip}:5000/api/status",
+                        "state_method": "GET",
+                        "state_response_on": "on",
+                        "state_response_off": "off",
+                        "headers": {
+                            "Content-Type": "application/x-www-form-urlencoded"  # Changed content type
+                        }
+                    }
+                ]
+            }
+        }
     }
     
-    fan_pin = fan_pins.get(data.get('fan_speed', 'low'))
-    
-    if 'fan_only' in mode:
-        ac.turn_on_fan(fan_pin)
-        return jsonify({"status": "success", "message": "Fan mode activated"})
-    elif 'with_compressor' in mode:
-        timer_thread = threading.Thread(target=ac.run_compressor_cycle, args=(fan_pin,))
-        timer_thread.start()
-        return jsonify({"status": "success", "message": "Compressor cycle started"})
-    
-    return jsonify({"status": "error", "message": "Invalid mode selected"})
+    config_path = os.path.abspath('fauxmo_config.json')
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=4)
+    print(f"Fauxmo config saved to: {config_path}")
+    return config_path 
 
-@app.route('/api/schedule', methods=['POST'])
-def set_schedule():
-    data = request.get_json()
-    start_time = data.get('start_time')
-    end_time = data.get('end_time')
-    mode = data.get('mode')
-    fan_speed = data.get('fan_speed')
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    global current_mode, current_fan_speed
     
-    # Clear existing schedule
-    schedule.clear()
+    # Return "on" if the AC is in any active mode (fan_only or with_compressor)
+    # Return "off" if the AC is off
+    status = "on" if current_mode != "off" else "off"
     
-    # Schedule start
-    schedule.every().day.at(start_time).do(
-        lambda: control({"mode": mode, "fan_speed": fan_speed})
-    )
-    
-    # Schedule stop
-    schedule.every().day.at(end_time).do(
-        lambda: control({"mode": "off"})
-    )
-    
-    return jsonify({"status": "success", "message": f"Schedule set: {start_time} to {end_time}"})
-
-def run_schedule():
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
-
-# Start schedule thread
-schedule_thread = threading.Thread(target=run_schedule)
-schedule_thread.daemon = True
-schedule_thread.start()
+    return jsonify({
+        "status": status,
+        "mode": current_mode,
+        "fan_speed": current_fan_speed
+    })
 
 if __name__ == '__main__':
     try:
+        config_path = create_fauxmo_config()
+        print(f"Starting Flask app. Use 'fauxmo -c {config_path} -v' to start Fauxmo")
         app.run(host='0.0.0.0', port=5000, debug=True)
-    except Exception as e:
-        print(f"Error: {e}")
     finally:
         ac.safe_shutdown()
